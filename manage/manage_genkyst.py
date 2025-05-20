@@ -141,17 +141,8 @@ def test_normalization(exam, xyz, size, modality='T2'):
     img = np.squeeze(exam.T2.get_fdata()[:, xyz, :])[::-1, :]
     img = rotate(resize(img, output_shape=(size, size), preserve_range=True), 90, preserve_range=True)
 
-    # Normalisation identique au training
-    min_grey, max_grey = np.percentile(img, (1, 99))
-    img = rescale_intensity(img, in_range=(min_grey, max_grey), out_range=(0, 1))
-    img = img_as_ubyte(img)  # convertit en [0, 255]
-    img = img.astype(np.float32) / 255.0  # convertit en [0.0, 1.0]
-
+    img = img.astype(np.float32)  # Pas de /255 ni rescale
     return img
-
-
-
-
 
 
 ################

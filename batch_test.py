@@ -4,9 +4,9 @@ import subprocess
 import re
 
 # === Chemins ===
-DATA_DIR = "/home/hemery/code_halt_semi_supervised/data_halt_genkyst/labeled/T2"
-MASK_DIR = "/home/hemery/code_halt_semi_supervised/data_halt_genkyst/labeled/mask"
-OUTPUT_DIR = "./outputs/"
+DATA_DIR = "/home/hemery/code_halt_semi_supervised/data_halt_genkyst/test/images"
+MASK_DIR = "/home/hemery/code_halt_semi_supervised/data_halt_genkyst/test/masks"
+OUTPUT_DIR = "./outputs_TEACHER/"
 SCRIPT = "test_semi_supervised.py"
 
 # === Lister les fichiers T2 valides ===

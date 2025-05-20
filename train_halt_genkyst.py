@@ -6,6 +6,8 @@ import numpy as np
 import glob
 from torch.utils.data import DataLoader
 import torch.backends.cudnn as cudnn
+from sklearn.model_selection import train_test_split
+
 from nets.whichnet import whichnet
 from utils.train_utils import launch_training
 from utils.sampler import TwoStreamBatchSampler
@@ -30,18 +32,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--model', type=int, default=1)
-    parser.add_argument('--epochs', type=int, default=3000)
-    parser.add_argument('--semi_weight', type=float, default=1.0)
-    parser.add_argument('--save_dir', type=str, default='./checkpoints/')
+    parser.add_argument('--epochs', type=int, default=1000)
+    parser.add_argument('--lambda_consistency', type=float, default=1)
+    parser.add_argument('--save_dir', type=str, default='./checkpoints_test/')
     parser.add_argument('--vgg', action='store_true')
     parser.add_argument('--size', type=int, default=256)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=1e-4)
     args = parser.parse_args()
 
     cudnn.benchmark = True
 
     # === Chargement dynamique des patients labellisés et non-labellisés ===
-    base_dir = "/home/hemery/code_halt_semi_supervised/data_halt_genkyst"
+    base_dir = "/home/hemery/code_halt_semi_supervised/data_halt_genkyst/train"
     labeled_img_dir = os.path.join(base_dir, "labeled/T2")
     labeled_mask_dir = os.path.join(base_dir, "labeled/mask")
     unlabeled_dir = os.path.join(base_dir, "unlabeled")
@@ -66,6 +68,12 @@ if __name__ == "__main__":
 
     print(f"✓ Found {len(labeled_ids)} labeled patients")
 
+    # === Séparation train/val sur les données labellisées ===
+    train_ids, val_ids, train_series, val_series = train_test_split(
+        labeled_ids, labeled_series, test_size=8, random_state=42
+    )
+
+    # === Chargement des patients non-labellisés ===
     unlabeled_ids = []
     unlabeled_series = []
 
@@ -82,58 +90,75 @@ if __name__ == "__main__":
 
     print(f"✓ Found {len(unlabeled_ids)} unlabeled patients")
 
-    # === Créer les flags labellisés / non labellisés ===
-    labeled_flags = [True] * len(labeled_ids) + [False] * len(unlabeled_ids)
+    # === Création des datasets ===
+    train_flags = [True] * len(train_ids) + [False] * len(unlabeled_ids)
+    val_flags = [True] * len(val_ids)
 
-    # === Créer le dataset dynamique ===
-    dataset = tiny_dataset(
-        ids=labeled_ids + unlabeled_ids,
-        series=labeled_series + unlabeled_series,
-        labeled_flags=labeled_flags,
+    train_dataset = tiny_dataset(
+        ids=train_ids + unlabeled_ids,
+        series=train_series + unlabeled_series,
+        labeled_flags=train_flags,
         size=args.size,
         vgg=args.vgg,
         base_dir=base_dir
     )
 
-    # === Indices labellisés / non-labellisés ===
-    labeled_idxs = [i for i, entry in enumerate(dataset.entries) if entry['labeled']]
-    unlabeled_idxs = [i for i, entry in enumerate(dataset.entries) if not entry['labeled']]
+    val_dataset = tiny_dataset(
+        ids=val_ids,
+        series=val_series,
+        labeled_flags=val_flags,
+        size=args.size,
+        vgg=args.vgg,
+        base_dir=base_dir
+    )
 
-    print(f"Labeled slices: {len(labeled_idxs)}")
-    print(f"Unlabeled slices: {len(unlabeled_idxs)}")
-    print(f" Total slices: {len(dataset)}")
+    # === Indices labellés / non-labellés pour le sampler ===
+    train_labeled_idxs = [i for i, entry in enumerate(train_dataset.entries) if entry['labeled']]
+    train_unlabeled_idxs = [i for i, entry in enumerate(train_dataset.entries) if not entry['labeled']]
 
-    # === Sampler personnalisé ===
-    batch_sampler = TwoStreamBatchSampler(
-        primary_indices=labeled_idxs,
-        secondary_indices=unlabeled_idxs,
+    print(f"✓ Training set: {len(train_labeled_idxs)} labeled, {len(train_unlabeled_idxs)} unlabeled")
+    print(f"✓ Validation set: {len(val_dataset)} labeled")
+
+    # === Sampler & DataLoaders ===
+    train_sampler = TwoStreamBatchSampler(
+        primary_indices=train_labeled_idxs,
+        secondary_indices=train_unlabeled_idxs,
         batch_size=args.batch_size,
         secondary_batch_size=args.batch_size // 2
     )
 
     train_loader = DataLoader(
-        dataset,
-        batch_sampler=batch_sampler,
+        train_dataset,
+        batch_sampler=train_sampler,
         num_workers=4,
         pin_memory=True,
         worker_init_fn=worker_init_fn,
         collate_fn=semi_supervised_collate
     )
 
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True
+    )
+
+    # === Modèle ===
     net, _ = whichnet(net_id=args.model, n_classes=1, img_size=args.size)
     net = net.cuda()
 
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
-    criterion = torch.nn.BCEWithLogitsLoss()
+    criterion = torch.nn.BCEWithLogitsLoss() # appeler en argument pour minimiser la BCE pour calcul loss supervisée
 
     launch_training(
         model=net,
         train_loader=train_loader,
+        val_loader=val_loader,
         criterion=criterion,
         optimizer=optimizer,
         epochs=args.epochs,
         save_dir=args.save_dir,
-        semi_weight=args.semi_weight,
-        enable_plot=False  # <- désactive plot 
-)
-
+        lambda_consistency=args.lambda_consistency,
+        enable_plot=False  # <- désactive plot
+    )

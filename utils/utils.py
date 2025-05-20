@@ -91,6 +91,16 @@ def normalization_masks(imgs_masks):
     imgs_masks = imgs_masks.astype(np.uint8)
     return imgs_masks
 
+
+def min_max_normalization(img):
+    """Applique une normalisation min-max sur l'image."""
+    img_min = img.min()
+    img_max = img.max()
+    if img_max != img_min:
+        img = (img - img_min) / (img_max - img_min)  # Normalisation min-max
+    return img
+
+
 def get_array_affine_header(test_dataset, modality):
     if modality == 'T2':
         array = np.zeros(test_dataset.exam.T2.shape, dtype=np.uint16)
@@ -99,7 +109,45 @@ def get_array_affine_header(test_dataset, modality):
         array = np.zeros(test_dataset.exam.CT.shape, dtype=np.uint16)
         affine, header = test_dataset.exam.CT.affine, test_dataset.exam.CT.header        
     return array, affine, header
-    
+
+
+import numpy as np
+
+import nibabel as nib
+
+
+import numpy as np
+
+def force_to_257_N_257(volume, affine, name=""):
+    if volume.shape[0] == 512 and volume.shape[1] == 512:
+        print(f"[{name}] Transformation appliquée : {volume.shape} -> ({volume.shape[0]}, {volume.shape[2]}, {volume.shape[1]})")
+
+        volume = np.transpose(volume, (0, 2, 1))  # y <-> z
+        volume = volume[:, ::-1, :]               # Inversion de l'axe Z (ancien Y)
+        volume = volume[::-1, :, :]               # Inversion de l'axe X (gauche-droite)
+        volume = volume[:, :, ::-1]               # 🆕 Inversion de l'axe S/I (nouvelle Z après transpo)
+
+        affine_fixed = affine.copy()
+        affine_fixed[:3, [1, 2]] = affine_fixed[:3, [2, 1]]
+        affine_fixed[:3, 2] = -affine_fixed[:3, 2]
+        affine_fixed[:3, 0] = -affine_fixed[:3, 0]
+        # affine_fixed[:3, 1] = -affine_fixed[:3, 1]  # ❌ Supprimer cette ligne
+
+        return volume, affine_fixed
+    else:
+        print(f"[{name}] Aucune transformation nécessaire : {volume.shape}")
+        return volume, affine
+
+
+
+
+
+
+
+
+
+
+
 def img_init(img):
     return nibabel.Nifti1Image(img.get_fdata().astype(np.float32), affine=img.affine, header=img.header)
 

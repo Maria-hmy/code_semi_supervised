@@ -12,7 +12,8 @@ from torchvision.transforms.functional import to_pil_image, affine
 from exams.exam_halt import exam_halt
 from exams.exam_halt_prod import exam_halt_prod
 from manage.manage_genkyst import test_normalization
-from utils.utils import normalization_imgs, normalization_masks
+from utils.utils import normalization_imgs, normalization_masks, min_max_normalization
+
 
 
 
@@ -26,21 +27,24 @@ class tiny_dataset_test(Dataset):
         self.vgg = vgg
         self.output = output
         self.modality = 'T2'
-        self.path = "/home/hemery/code_halt_semi_supervised/data_halt_genkyst/labeled/T2"  # fixe chemin local T2 uniquement
+        self.path = "/home/hemery/code_halt_semi_supervised/data_halt_genkyst/test/images"  # fixe chemin local T2 uniquement
 
         if modality != 'T2':
             raise ValueError("Seul le mode 'T2' est supporté dans tiny_dataset_halt_prod.")
 
         self.exam = exam_halt_prod(self.id, self.serie, self.path, self.output, self.modality)
-        self.exam.normalize()
 
     def __len__(self):
         return self.exam.T2.shape[1]  
 
-    
-    
     def __getitem__(self, idx: int):
         img = test_normalization(self.exam, idx, self.size, self.modality)
+        
+        # Appliquer la normalisation ici, après l'extraction de l'image
+        img = min_max_normalization(img)
+        #print(f"Normalized image - min: {img.min()}, max: {img.max()}, mean: {img.mean()}, std: {img.std()}")
+
+        
 
         if self.vgg:
             img_ = np.stack([img] * 3, axis=-1)
@@ -49,6 +53,7 @@ class tiny_dataset_test(Dataset):
 
         img_tensor = torch.from_numpy(img_.transpose(2, 0, 1))
         return img_tensor
+
 
 
 

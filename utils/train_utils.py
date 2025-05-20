@@ -58,13 +58,17 @@ from utils.metric import dice_coeff
 import matplotlib.pyplot as plt
 import numpy as np
 
-def update_ema_variables(ema_model, model, alpha, global_step):
+def update_ema_variables(ema_model, model, alpha, global_step):  #ajout global_step ici si besoin
     alpha = min(1 - 1 / (global_step + 1), alpha)
     for ema_param, param in zip(ema_model.parameters(), model.parameters()):
         ema_param.data.mul_(alpha).add_(param.data, alpha=1 - alpha)
 
+# EMA : ema_param = α⋅ema_param + (1 − α)⋅param        avec ema.param = poids teacher et param = poids student
+
+
 def criterion_consistency(p1, p2):
-    return torch.mean((p1 - p2) ** 2)
+    return torch.mean((p1 - p2) ** 2) # calcul MSE pour loss unsupervised 
+
 
 def plot_sample(image, label, pred_student, step, writer=None, save_dir=None, pred_teacher=None):
     image = image.detach().cpu().squeeze().numpy()
@@ -135,9 +139,15 @@ def dice_history(epochs, train_dices, output):
     np.save(os.path.join(output, 'dice_train.npy'), np.array(train_dices))
 
 
+def launch_training(model, train_loader, val_loader, criterion, optimizer, epochs, save_dir, lambda_consistency =0, enable_plot=False):
+    import copy
+    import logging
+    import os
+    import torch
+    from torch.utils.tensorboard import SummaryWriter
+    from utils.metric import dice_coeff
+    from utils.train_utils import update_ema_variables, criterion_consistency, plot_sample, dice_history, eval_net
 
-
-def launch_training(model, train_loader, criterion, optimizer, epochs, save_dir, semi_weight=1.0, enable_plot=False):
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -151,8 +161,14 @@ def launch_training(model, train_loader, criterion, optimizer, epochs, save_dir,
     ema_decay = 0.99
     train_dices = []
     best_dice = -1
+    rampup_length = 100  # epochs pour monter lambda_consistency
 
     for epoch in range(epochs):
+        # === Ramp-up dynamique du facteur de pondération loss unsupervised ===
+        rampup = min(1.0, epoch / rampup_length)
+        current_lambda_consistency = lambda_consistency * rampup
+        writer.add_scalar('hyperparam/lambda_consistency', current_lambda_consistency, epoch)
+
         student_net.train()
         running_loss = 0.0
         epoch_dice_total = 0.0
@@ -173,17 +189,18 @@ def launch_training(model, train_loader, criterion, optimizer, epochs, save_dir,
                 pred = preds_student[i:i+1]
                 if mask is not None:
                     mask = mask.unsqueeze(0).to(device)
-                    loss_seg = criterion(pred, mask)
+                    loss_seg = criterion(pred.float(), mask.float())  #BCE
+
                     pred_sigmoid = torch.sigmoid(pred)
                     dice_numerator = 2 * (pred_sigmoid * mask).sum()
                     dice_denominator = (pred_sigmoid + mask).sum()
-                    loss_seg_dice = 1 - (dice_numerator + 1e-5) / (dice_denominator + 1e-5)
-                    supervised_loss += loss_seg + loss_seg_dice
+                    loss_seg_dice = 1 - (dice_numerator + 1e-5) / (dice_denominator + 1e-5) # 1 - DICE
+                    supervised_loss += 0.5 * (loss_seg + loss_seg_dice) # dice et bce pris à part égal (0.5)
                     num_supervised += 1
                     epoch_dice_total += dice_coeff((pred_sigmoid > 0.5).float(), mask).item()
                     epoch_dice_count += 1
                 else:
-                    unsupervised_loss += criterion_consistency(
+                    unsupervised_loss += criterion_consistency(    # MSE
                         torch.sigmoid(pred), torch.sigmoid(preds_teacher[i:i+1]))
                     num_unsupervised += 1
 
@@ -192,21 +209,20 @@ def launch_training(model, train_loader, criterion, optimizer, epochs, save_dir,
             if num_unsupervised > 0:
                 unsupervised_loss /= num_unsupervised
 
-            total_loss = supervised_loss + semi_weight * unsupervised_loss
+            total_loss = supervised_loss + current_lambda_consistency* unsupervised_loss
 
             optimizer.zero_grad()
             total_loss.backward()
             optimizer.step()
 
-            update_ema_variables(teacher_net, student_net, ema_decay, global_step)
+            update_ema_variables(teacher_net, student_net, ema_decay, global_step) # test sans global_step avec ema_decay fixe 
             global_step += 1
             running_loss += total_loss.item()
 
-            writer.add_scalar('loss/supervised_total', supervised_loss.item() if num_supervised else 0, global_step)
-            writer.add_scalar('loss/unsupervised', unsupervised_loss.item() if num_unsupervised else 0, global_step)
-            writer.add_scalar('loss/total', total_loss.item(), global_step)
+            writer.add_scalar('loss/supervised_total', supervised_loss.item() if num_supervised else 0, epoch)
+            writer.add_scalar('loss/unsupervised', unsupervised_loss.item() if num_unsupervised else 0, epoch)
+            writer.add_scalar('loss/total', total_loss.item(), epoch)
 
-            # PLots désactivables
             if enable_plot and global_step % 20 == 0:
                 for i, mask in enumerate(masks):
                     if mask is not None:
@@ -217,26 +233,38 @@ def launch_training(model, train_loader, criterion, optimizer, epochs, save_dir,
                         plot_sample(img, lbl, pred_student, global_step, writer, save_dir, pred_teacher)
                         break
 
-
+        # === Calcul Dice Train & Val ===
         epoch_dice = epoch_dice_total / epoch_dice_count if epoch_dice_count > 0 else 0
+        val_dice = eval_net(student_net, val_loader, device)
+
         train_dices.append(epoch_dice)
 
-        if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
-            logging.info(f"[Epoch {epoch+1}/{epochs}] Loss: {running_loss:.2f} | Dice: {epoch_dice:.4f} ({epoch_dice_count} slices)")
+        writer.add_scalar('metrics/dice_train', epoch_dice, epoch)
+        writer.add_scalar('metrics/dice_val', val_dice, epoch)
 
-        writer.add_scalar('metrics/dice_epoch', epoch_dice, epoch)
+        if (epoch + 1) % 50 == 0 or epoch == epochs - 1:
+            logging.info(f"[Epoch {epoch+1}/{epochs}] Train Dice: {epoch_dice:.4f} | Val Dice: {val_dice:.4f}")
 
-        if epoch_dice > best_dice:
-            torch.save(student_net.state_dict(), os.path.join(save_dir, "best_model.pth"))
-            best_dice = epoch_dice
+        if val_dice > best_dice:
+            best_dice = val_dice
+            epoch_label = f"{epoch+1:03d}_epoch_best_model"
 
-        if (epoch + 1) % 100 == 0:
-            torch.save(student_net.state_dict(), os.path.join(save_dir, f"student_epoch_{epoch+1}.pth"))
-            torch.save(teacher_net.state_dict(), os.path.join(save_dir, f"teacher_epoch_{epoch+1}.pth"))
+            student_path = os.path.join(save_dir, f"{epoch_label}_student.pth")
+            teacher_path = os.path.join(save_dir, f"{epoch_label}_teacher.pth")
+
+    
+            torch.save(student_net.state_dict(), student_path)
+            torch.save(teacher_net.state_dict(), teacher_path)
+
+            logging.info(f"Nouveau meilleur modèle sauvegardé à l'époque {epoch+1} (Val Dice: {val_dice:.4f})")
+            logging.info(f"  → Fichiers : {os.path.basename(student_path)} et {os.path.basename(teacher_path)}")
+
 
     dice_history(epochs, train_dices, save_dir)
     writer.close()
     logging.info("Training finished.")
+
+
 
 
 
