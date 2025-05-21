@@ -281,6 +281,13 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
         writer.add_scalar('metrics/dice_train', epoch_dice, epoch)
         writer.add_scalar('metrics/dice_val', val_dice, epoch)
 
+        save_all_metric_curves(
+            train_dices, val_dices,
+            bce_losses, dice_losses,
+            mse_losses, total_losses,
+            save_dir
+        )
+
         if (epoch + 1) % 50 == 0 or epoch == epochs - 1:
             logging.info(f"[Epoch {epoch+1}/{epochs}] Train Dice: {epoch_dice:.4f} | Val Dice: {val_dice:.4f}")
 
@@ -299,12 +306,7 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
             logging.info(f"  → Fichiers : {os.path.basename(student_path)} et {os.path.basename(teacher_path)}")
 
 
-    save_all_metric_curves(
-    train_dices, val_dices,
-    bce_losses, dice_losses,
-    mse_losses, total_losses,
-    save_dir
-    )
+    
     writer.close()
     logging.info("Training finished.")
 
