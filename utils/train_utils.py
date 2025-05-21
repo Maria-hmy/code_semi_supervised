@@ -138,14 +138,6 @@ def plot_metric_curve(values, ylabel, save_path):
     plt.savefig(save_path)
     plt.close()
 
-def dice_history(epochs, train_dices, output):
-    plt.plot(range(len(train_dices)), train_dices)
-    plt.xlabel('epoch')
-    plt.ylabel('dice')
-    plt.grid()
-    plt.savefig(os.path.join(output, 'dice_train_curve.png'))
-    plt.close()
-    np.save(os.path.join(output, 'dice_train.npy'), np.array(train_dices))
 
 def save_all_metric_curves(train_dices, val_dices, bce_losses, dice_losses, mse_losses, total_losses, save_dir):
     metrics = {
@@ -166,6 +158,8 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
     import logging
     import os
     import torch
+    import matplotlib
+    matplotlib.use('Agg')
     from torch.utils.tensorboard import SummaryWriter
     from utils.metric import dice_coeff
     from utils.train_utils import update_ema_variables, criterion_consistency, plot_sample, dice_history, eval_net
@@ -305,7 +299,12 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
             logging.info(f"  → Fichiers : {os.path.basename(student_path)} et {os.path.basename(teacher_path)}")
 
 
-    dice_history(epochs, train_dices, save_dir)
+    save_all_metric_curves(
+    train_dices, val_dices,
+    bce_losses, dice_losses,
+    mse_losses, total_losses,
+    save_dir
+    )
     writer.close()
     logging.info("Training finished.")
 
