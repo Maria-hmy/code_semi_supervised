@@ -237,9 +237,8 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
                     num_supervised += 1
                     epoch_dice_total += dice_coeff((pred_sigmoid > 0.5).float(), mask).item()
                     epoch_dice_count += 1
-                else:
-                    unsupervised_loss += criterion_consistency(    # MSE
-                        torch.sigmoid(pred), torch.sigmoid(preds_teacher[i:i+1]))
+                else :    
+                    mse = criterion_consistency(torch.sigmoid(pred), torch.sigmoid(preds_teacher[i:i+1]))
                     unsupervised_loss += mse
                     epoch_mse_loss += mse.item()
                     num_unsupervised += 1
