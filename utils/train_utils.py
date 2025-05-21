@@ -129,6 +129,15 @@ def eval_net(net, loader, device):
             n_batches += 1
     return tot / n_batches if n_batches > 0 else 0
 
+
+def plot_metric_curve(values, ylabel, save_path):
+    plt.plot(range(len(values)), values)
+    plt.xlabel('Epoch')
+    plt.ylabel(ylabel)
+    plt.grid()
+    plt.savefig(save_path)
+    plt.close()
+
 def dice_history(epochs, train_dices, output):
     plt.plot(range(len(train_dices)), train_dices)
     plt.xlabel('epoch')
@@ -137,6 +146,19 @@ def dice_history(epochs, train_dices, output):
     plt.savefig(os.path.join(output, 'dice_train_curve.png'))
     plt.close()
     np.save(os.path.join(output, 'dice_train.npy'), np.array(train_dices))
+
+def save_all_metric_curves(train_dices, val_dices, bce_losses, dice_losses, mse_losses, total_losses, save_dir):
+    metrics = {
+        'dice_train': (train_dices, 'Dice (Train)', 'dice_train_curve.png'),
+        'dice_val': (val_dices, 'Dice (Val)', 'dice_val_curve.png'),
+        'bce_loss': (bce_losses, 'BCE Loss', 'loss_bce_curve.png'),
+        'dice_loss': (dice_losses, 'Dice Loss', 'loss_dice_curve.png'),
+        'mse_loss': (mse_losses, 'MSE Loss', 'loss_mse_curve.png'),
+        'total_loss': (total_losses, 'Total Loss', 'loss_total_curve.png'),
+    }
+    for key, (values, ylabel, filename) in metrics.items():
+        plot_metric_curve(values, ylabel, os.path.join(save_dir, filename))
+        np.save(os.path.join(save_dir, f"{key}.npy"), np.array(values))
 
 
 def launch_training(model, train_loader, val_loader, criterion, optimizer, epochs, save_dir, lambda_consistency =0, enable_plot=False):
@@ -160,6 +182,11 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
     global_step = 0
     ema_decay = 0.99
     train_dices = []
+    val_dices = []
+    total_losses = []
+    bce_losses = []
+    dice_losses = []
+    mse_losses = []
     best_dice = -1
     rampup_length = 100  # epochs pour monter lambda_consistency
 
@@ -173,6 +200,12 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
         running_loss = 0.0
         epoch_dice_total = 0.0
         epoch_dice_count = 0
+        epoch_bce_loss = 0.0
+        epoch_dice_loss = 0.0
+        epoch_mse_loss = 0.0
+        num_bce = 0
+        num_dice = 0
+        num_mse = 0
 
         for step, (images, masks) in enumerate(train_loader):
             images = torch.stack(images).to(device)
@@ -195,14 +228,22 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
                     dice_numerator = 2 * (pred_sigmoid * mask).sum()
                     dice_denominator = (pred_sigmoid + mask).sum()
                     loss_seg_dice = 1 - (dice_numerator + 1e-5) / (dice_denominator + 1e-5) # 1 - DICE
-                    supervised_loss += 0.5 * (loss_seg + loss_seg_dice) # dice et bce pris à part égal (0.5)
+                    
+                    supervised_loss += 0.5 * (loss_seg + loss_seg_dice)
+                    epoch_bce_loss += loss_seg.item()
+                    epoch_dice_loss += loss_seg_dice.item()
+                    num_bce += 1
+                    num_dice += 1
                     num_supervised += 1
                     epoch_dice_total += dice_coeff((pred_sigmoid > 0.5).float(), mask).item()
                     epoch_dice_count += 1
                 else:
                     unsupervised_loss += criterion_consistency(    # MSE
                         torch.sigmoid(pred), torch.sigmoid(preds_teacher[i:i+1]))
+                    unsupervised_loss += mse
+                    epoch_mse_loss += mse.item()
                     num_unsupervised += 1
+                    num_mse += 1
 
             if num_supervised > 0:
                 supervised_loss /= num_supervised
@@ -215,7 +256,7 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
             total_loss.backward()
             optimizer.step()
 
-            update_ema_variables(teacher_net, student_net, ema_decay, global_step) # test sans global_step avec ema_decay fixe 
+            update_ema_variables(teacher_net, student_net, ema_decay, global_step) 
             global_step += 1
             running_loss += total_loss.item()
 
@@ -238,6 +279,11 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
         val_dice = eval_net(student_net, val_loader, device)
 
         train_dices.append(epoch_dice)
+        val_dices.append(val_dice)
+        total_losses.append(running_loss / len(train_loader))
+        bce_losses.append(epoch_bce_loss / num_bce if num_bce > 0 else 0)
+        dice_losses.append(epoch_dice_loss / num_dice if num_dice > 0 else 0)
+        mse_losses.append(epoch_mse_loss / num_mse if num_mse > 0 else 0)
 
         writer.add_scalar('metrics/dice_train', epoch_dice, epoch)
         writer.add_scalar('metrics/dice_val', val_dice, epoch)
