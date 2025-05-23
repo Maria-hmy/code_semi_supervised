@@ -173,7 +173,11 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
     student_net = model.to(device)
     teacher_net = copy.deepcopy(model).to(device)
     teacher_net.load_state_dict(model.state_dict())
-    teacher_net.eval()
+    for param in teacher_net.parameters():
+        param.detach_()
+
+    student_net.train()
+    optimizer = torch.optim.Adam(student_net.parameters(), lr=1e-3)
 
     writer = SummaryWriter(log_dir=os.path.join(save_dir, 'logs'))
     global_step = 0
