@@ -139,10 +139,12 @@ def plot_metric_curve(values, ylabel, save_path):
     plt.close()
 
 
-def save_all_metric_curves(train_dices, val_dices, bce_losses, dice_losses, mse_losses, total_losses, save_dir):
+def save_all_metric_curves(train_dices, val_dices_student, val_dices_teacher,
+                           bce_losses, dice_losses, mse_losses, total_losses, save_dir):
     metrics = {
         'dice_train': (train_dices, 'Dice (Train)', 'dice_train_curve.png'),
-        'dice_val': (val_dices, 'Dice (Val)', 'dice_val_curve.png'),
+        'dice_val_student': (val_dices_student, 'Dice (Val - Student)', 'dice_val_student_curve.png'),
+        'dice_val_teacher': (val_dices_teacher, 'Dice (Val - Teacher)', 'dice_val_teacher_curve.png'),
         'bce_loss': (bce_losses, 'BCE Loss', 'loss_bce_curve.png'),
         'dice_loss': (dice_losses, 'Dice Loss', 'loss_dice_curve.png'),
         'mse_loss': (mse_losses, 'MSE Loss', 'loss_mse_curve.png'),
@@ -151,6 +153,7 @@ def save_all_metric_curves(train_dices, val_dices, bce_losses, dice_losses, mse_
     for key, (values, ylabel, filename) in metrics.items():
         plot_metric_curve(values, ylabel, os.path.join(save_dir, filename))
         np.save(os.path.join(save_dir, f"{key}.npy"), np.array(values))
+
 
 
 def launch_training(model, train_loader, val_loader, criterion, optimizer, epochs, save_dir, lambda_consistency =0, enable_plot=False):
@@ -176,7 +179,8 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
     global_step = 0
     ema_decay = 0.99
     train_dices = []
-    val_dices = []
+    val_dices_student = []
+    val_dices_teacher = []
     total_losses = []
     bce_losses = []
     dice_losses = []
@@ -270,23 +274,29 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
         # === Calcul Dice Train & Val ===
         epoch_dice = epoch_dice_total / epoch_dice_count if epoch_dice_count > 0 else 0
         val_dice = eval_net(student_net, val_loader, device)
+        val_dice_teacher = eval_net(teacher_net, val_loader, device)
+
 
         train_dices.append(epoch_dice)
-        val_dices.append(val_dice)
+        val_dices_student.append(val_dice)
+        val_dices_teacher.append(val_dice_teacher)
         total_losses.append(running_loss / len(train_loader))
         bce_losses.append(epoch_bce_loss / num_bce if num_bce > 0 else 0)
         dice_losses.append(epoch_dice_loss / num_dice if num_dice > 0 else 0)
         mse_losses.append(epoch_mse_loss / num_mse if num_mse > 0 else 0)
 
         writer.add_scalar('metrics/dice_train', epoch_dice, epoch)
-        writer.add_scalar('metrics/dice_val', val_dice, epoch)
+        writer.add_scalar('metrics/dice_val_student', val_dice_student, epoch)
+        writer.add_scalar('metrics/dice_val_teacher', val_dice_teacher, epoch)
+
 
         save_all_metric_curves(
-            train_dices, val_dices,
-            bce_losses, dice_losses,
-            mse_losses, total_losses,
-            save_dir
-        )
+        train_dices, val_dices_student, val_dices_teacher,
+        bce_losses, dice_losses,
+        mse_losses, total_losses,
+        save_dir
+    )
+
 
         if (epoch + 1) % 50 == 0 or epoch == epochs - 1:
             logging.info(f"[Epoch {epoch+1}/{epochs}] Train Dice: {epoch_dice:.4f} | Val Dice: {val_dice:.4f}")
