@@ -185,7 +185,8 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
     bce_losses = []
     dice_losses = []
     mse_losses = []
-    best_dice = -1
+    best_dice_student = -1
+    best_dice_teacher = -1
     rampup_length = 100  # epochs pour monter lambda_consistency
 
     for epoch in range(epochs):
@@ -273,12 +274,12 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
 
         # === Calcul Dice Train & Val ===
         epoch_dice = epoch_dice_total / epoch_dice_count if epoch_dice_count > 0 else 0
-        val_dice = eval_net(student_net, val_loader, device)
+        val_dice_student = eval_net(student_net, val_loader, device)
         val_dice_teacher = eval_net(teacher_net, val_loader, device)
 
 
         train_dices.append(epoch_dice)
-        val_dices_student.append(val_dice)
+        val_dices_student.append(val_dice_student)
         val_dices_teacher.append(val_dice_teacher)
         total_losses.append(running_loss / len(train_loader))
         bce_losses.append(epoch_bce_loss / num_bce if num_bce > 0 else 0)
@@ -297,24 +298,22 @@ def launch_training(model, train_loader, val_loader, criterion, optimizer, epoch
         save_dir
     )
 
-
         if (epoch + 1) % 50 == 0 or epoch == epochs - 1:
-            logging.info(f"[Epoch {epoch+1}/{epochs}] Train Dice: {epoch_dice:.4f} | Val Dice: {val_dice:.4f}")
+            logging.info(f"[Epoch {epoch+1}/{epochs}] Train Dice: {epoch_dice:.4f} | Val Dice Student: {val_dice_student:.4f} | Val Dice Teacher: {val_dice_teacher:.4f} ")
 
-        if val_dice > best_dice:
-            best_dice = val_dice
-            epoch_label = f"{epoch+1:03d}_epoch_best_model"
-
-            student_path = os.path.join(save_dir, f"{epoch_label}_student.pth")
-            teacher_path = os.path.join(save_dir, f"{epoch_label}_teacher.pth")
-
-    
+        if val_dice_student > best_dice_student:
+            best_dice_student = val_dice_student
+            student_path = os.path.join(save_dir, "best_model_student.pth")
             torch.save(student_net.state_dict(), student_path)
+            logging.info(f"[Student] Nouveau meilleur modèle sauvegardé (Val Dice: {val_dice_student:.4f})")
+
+        if val_dice_teacher > best_dice_teacher:
+            best_dice_teacher = val_dice_teacher
+            teacher_path = os.path.join(save_dir, "best_model_teacher.pth")
             torch.save(teacher_net.state_dict(), teacher_path)
+            logging.info(f"[Teacher] Nouveau meilleur modèle sauvegardé (Val Dice: {val_dice_teacher:.4f})")
 
-            logging.info(f"Nouveau meilleur modèle sauvegardé à l'époque {epoch+1} (Val Dice: {val_dice:.4f})")
-            logging.info(f"  → Fichiers : {os.path.basename(student_path)} et {os.path.basename(teacher_path)}")
-
+       
 
     
     writer.close()
