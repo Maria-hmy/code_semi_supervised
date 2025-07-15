@@ -154,7 +154,7 @@ def save_all_metric_curves(train_dices, val_dices_student, val_dices_teacher,
 
 
 
-def sigmoid_rampup(current, rampup_length):# Consistency ramp-up from https://arxiv.org/abs/1610.02242
+def sigmoid_rampup(current, rampup_length):# Consistency ramp-up gaussienne from https://arxiv.org/abs/1610.02242
         
         if rampup_length == 0:
             return 1.0
