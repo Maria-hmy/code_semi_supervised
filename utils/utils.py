@@ -131,7 +131,7 @@ def force_to_257_N_257(volume, affine, name=""):
         affine_fixed[:3, [1, 2]] = affine_fixed[:3, [2, 1]]
         affine_fixed[:3, 2] = -affine_fixed[:3, 2]
         affine_fixed[:3, 0] = -affine_fixed[:3, 0]
-        # affine_fixed[:3, 1] = -affine_fixed[:3, 1]  # ❌ Supprimer cette ligne
+       
 
         return volume, affine_fixed
     else:
